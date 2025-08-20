@@ -1,0 +1,171 @@
+---
+title: "Predication report"
+author: "Daniel Aklilu"
+date: "2025-08-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Executive Summary
+Using a Random Forest model, we achieved over 99% accuracy in predicting exercise quality
+accross five activity classes(A-E). The model showed strong generlaization on the validation set, with sensor features from the belt and dumbbell identified as the most important predictors. Final predictions for the test dataset were generated with high confidence and submitted in the required format.
+
+
+## Load Data
+
+```{r}
+library(tidyverse)
+library(dplyr)
+
+URL_train <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+URL_test <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+# Download data
+download.file(URL_train, destfile = "pml-training.csv")
+download.file(URL_test,destfile = "pml-testing.csv")
+# working directory
+getwd()
+# setworking directory
+setwd(dir = "C:/Users/Danie/Desktop/John Hopkins University Data Science Certification/Project-11")
+
+#loaded the training and  testing data set
+pml_train <- read_csv("pml-training.csv")
+pml_test <- read_csv("pml-testing.csv")
+#get head values of train and testing data
+head(pml_train, 10)
+head(pml_test, 10)
+
+```
+
+## Cleaning up Data
+
+
+```{r}
+#Removes certain columns that we do not need for out training set
+pml_trainClean <- subset(pml_train, select = c(
+                           # Belt sensors
+                           roll_belt, pitch_belt, yaw_belt, total_accel_belt,
+                           gyros_belt_x, gyros_belt_y, gyros_belt_z,
+                           accel_belt_x, accel_belt_y, accel_belt_z,
+                           magnet_belt_x, magnet_belt_y, magnet_belt_z,
+                           
+                           # Arm sensors
+                           roll_arm, pitch_arm, yaw_arm, total_accel_arm,
+                           gyros_arm_x, gyros_arm_y, gyros_arm_z,
+                           accel_arm_x, accel_arm_y, accel_arm_z,
+                           magnet_arm_x, magnet_arm_y, magnet_arm_z,
+                           
+                           # Dumbbell sensors
+                           roll_dumbbell, pitch_dumbbell,yaw_dumbbell,total_accel_dumbbell,
+                           gyros_dumbbell_x, gyros_dumbbell_y, gyros_dumbbell_z,
+                           accel_dumbbell_x, accel_dumbbell_y, accel_dumbbell_z,
+                           magnet_dumbbell_x, magnet_dumbbell_y, magnet_dumbbell_z,
+                           
+                           # Forearm sensors
+                           roll_forearm, pitch_forearm, yaw_forearm, total_accel_forearm,
+                           gyros_forearm_x, gyros_forearm_y, gyros_forearm_z,
+                           accel_forearm_x, accel_forearm_y, accel_forearm_z,
+                           magnet_forearm_x, magnet_forearm_y, magnet_forearm_z,
+                           
+                           # Target variable
+                           classe))
+
+  head(pml_trainClean,10)
+  
+  names(pml_trainClean)[50:53]
+  # Convert outcome variable 'classe' into a factor with 5 levels (A-E)
+  # Classification algorithm treat it as categorical,
+  # not as a character strings or numeric values.
+  pml_trainClean$classe <- factor(pml_trainClean$classe,
+                                  levels = c("A","B","C","D","E"))
+  # Quick check: should display "Factor w/ 5 
+  # levels 'A', 'B', 'C', 'D', 'E'
+  str(pml_trainClean$classe)
+
+```
+## Splitting Dataset into training and testing set
+```{r}
+library(caret)
+
+set.seed(235)
+# Indices for the 80% training split 
+train_80 <- createDataPartition(pml_trainClean$classe, p = 0.8, list = FALSE)
+#Make the two datasets
+train_set <- pml_trainClean[train_80,]
+valid_set <- pml_trainClean[-train_80,]
+# Cheaking rows
+nrow(train_set)
+nrow(valid_set)
+# Class balance in each split 
+prop.table(table(train_set$classe))
+prop.table(table(valid_set$classe))
+
+```
+
+## Training 80% of the data set
+```{r}
+library(ranger)
+
+ctrl <- trainControl(method = "cv", number = 5)
+# minimal grid: try ~sqrt(p) for mtry once or twice
+p <- ncol(train_set) -1
+grid <- data.frame(mtry = c(floor(sqrt(p)), floor(sqrt(p))+3),
+                   splitrule = "gini",
+                   min.node.size =5)
+# small grid => few models
+# fewer trees
+# skip importance to save time
+# subsample rows per tree (faster)
+# let ranger multithread
+
+rf_fast <- train(classe ~., data = train_set,
+                  method = "ranger", trControl = ctrl, 
+                  tuneGrid = grid, num.trees = 200,
+                  importance = "impurity", sample.fraction = 0.8,
+                  num.threads = parallel::detectCores())
+# predict on Validation set
+rf_pred <- predict(rf_fast,valid_set)
+# Shows accuracy, sensitivity, specificity
+confusionMatrix(rf_pred, valid_set$classe)
+
+```
+
+## Plot results
+```{r}
+
+    # get top 52 vlaues
+    vi <- varImp(rf_fast)
+    print(vi, top = 52 )
+    #plot top 20 vlaues
+    plot(vi, top = 20)
+
+```
+
+
+## Random Forest
+```{r}
+# predict on testing set
+rf_pred2 <- predict(rf_fast, pml_test)
+rf_pred2
+# Write one prediction per text file
+pml_write_files <- function(x){
+  for( i in seq_along(x)){
+    fn <- paste0("problem_id_", i , ".txt")
+    write.table(x[i], file = fn, quote = FALSE, row.names = FALSE,
+    col.names = FALSE)
+  }
+}
+# call the function for the testing set.
+pml_write_files(rf_pred2)
+
+
+```
+
+## Results
+The Random Forest model demonstrated strong predictive performance in classifying exercise quality. Using 80% of the data for training and 20% for validation, the model achieved on overall accuracy above 99%, with near-perfect sensitivity and specificity across all five classes(A-E). Variable importance analysis indicated that features derived from belt and dumbbell sensors, such as roll_belt, pitch_forearm, and magnet_dumbbell_z, contributed most significantly to predictive accuracy. These findings suggest that sensor data from specific body locations are highly informative in distinguishing exercise execution quality.
+
+## Conclusion
+The application of Random Forests to this dataset yielded highly reliable classification results, conforming the suitabiliy of ensemble learning methods for sensor-based activity recognition tasks. The high accuracy on the validation set indicates that the model is well-calibrated and generalizes effectively. Given the robustness of the model, the predicted classifications for the test dataset can be regarded with high confidence. Future work may involve evaluating model performance on external datasets or exploring feature selection strategies to further improve interpretability without sacrificing accuracy.
